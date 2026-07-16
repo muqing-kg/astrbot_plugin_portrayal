@@ -1,5 +1,14 @@
 # 更新日志
 
+## v1.2.1
+
+修复：
+
+- 修复 AstrBot 调用 handler 时 `self` 为 None 导致的 `_parse_command` 崩溃
+- 兼容 handler 多参数签名；`/画像` 前缀与 command 注册双入口
+- 微信场景隐藏 QQ 号（资料 chips / 页脚 / LLM 提示）
+- 加入基于 @/引用回复 的关系网统计与【关系网】正文区块
+
 ## v1.2.0
 
 新功能：
