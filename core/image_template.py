@@ -189,7 +189,7 @@ class PortraitCardData:
     catchphrases: list[str] = field(default_factory=list)
     period_bars: list[tuple[str, float]] = field(default_factory=list)
     avatar_bytes: bytes | None = None
-    footer: str = "模版作者 沐沐沐倾丶"
+    footer: str = "沐沐沐倾丶"
     generated_at: str = ""
     platform: str = "qq"
 
@@ -1139,18 +1139,26 @@ class PortraitImageTemplate:
 
     @staticmethod
     def _build_footer(data: PortraitCardData) -> str:
-        # 底部署名：模版作者固定展示
-        parts = [data.footer or "模版作者 沐沐沐倾丶"]
-        # 仅 QQ 在页脚带账号；微信不带任何账号数字
-        if getattr(data, "platform", "qq") == "qq" and data.meta_items:
-            for item in data.meta_items:
-                if item.startswith(("QQ ", "ID ")):
-                    parts.append(item)
-                    break
-        if getattr(data, "platform", "") == "wechat":
-            parts.append("微信")
+        """页脚：平台 · 时间 · 作者名（不展示具体 QQ 号）。"""
+        plat = getattr(data, "platform", "qq") or "qq"
+        if plat == "wechat":
+            platform_label = "微信"
+        elif plat == "qq":
+            platform_label = "QQ"
+        else:
+            platform_label = "聊天"
+
+        author = (data.footer or "沐沐沐倾丶").strip() or "沐沐沐倾丶"
+        # 兼容旧默认值
+        if author in {"astrbot_plugin_portrayal", "模版作者 沐沐沐倾丶"}:
+            author = "沐沐沐倾丶"
+        if author.startswith("模版作者 "):
+            author = author[len("模版作者 ") :].strip() or "沐沐沐倾丶"
+
+        parts = [platform_label]
         if data.generated_at:
             parts.append(data.generated_at)
+        parts.append(author)
         return "  ·  ".join(parts)
 
 

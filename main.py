@@ -46,7 +46,7 @@ class PortrayalPlugin(Star):
         self.llm = LLMService(self.cfg)
         self.avatars = AvatarService()
         self._cleanup_tasks: set[asyncio.Task] = set()
-        logger.info("astrbot_plugin_portrayal 已初始化 (v1.3.1)")
+        logger.info("astrbot_plugin_portrayal 已初始化 (v1.3.2)")
 
     async def initialize(self):
         pass
