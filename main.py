@@ -1,13 +1,21 @@
 # -*- coding: utf-8 -*-
+"""astrbot_plugin_portrayal - 人物画像插件
+
+Handler 签名遵循 AstrBot 规范：
+- command: (self, event) 仅前两个固定参数，其后只能是带默认值的指令参数
+- on_llm_request: (self, event, req)
+- event_message_type: (self, event)
+禁止在 command handler 使用 *args/**kwargs，否则会触发 _empty() takes no arguments。
+"""
+from __future__ import annotations
+
 import asyncio
 import re
 import time
 from pathlib import Path
-from typing import Any
 
 import aiohttp
 import astrbot.api.message_components as Comp
-
 from astrbot.api import logger
 from astrbot.api.event import filter
 from astrbot.api.star import Context, Star
@@ -24,31 +32,10 @@ from .core.llm import LLMService
 from .core.message import MessageManager
 from .core.model import UserProfile, normalize_platform
 
-# AstrBot 部分版本调用 handler 时 self 可能为 None，用模块级实例兜底
-_PLUGIN: "PortrayalPlugin | None" = None
-
-
-def _plugin() -> "PortrayalPlugin":
-    if _PLUGIN is None:
-        raise RuntimeError("PortrayalPlugin 尚未初始化")
-    return _PLUGIN
-
-
-def _as_event(*args, **kwargs) -> AstrMessageEvent | None:
-    for a in args:
-        if a is not None and hasattr(a, "message_str") and hasattr(a, "get_sender_id"):
-            return a  # type: ignore[return-value]
-    for k in ("event", "evt", "message_event"):
-        a = kwargs.get(k)
-        if a is not None and hasattr(a, "message_str"):
-            return a  # type: ignore[return-value]
-    return None
-
 
 class PortrayalPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
-        global _PLUGIN
         self.context = context
         self.cfg = PluginConfig(config, context)
         self.db = UserProfileDB(self.cfg)
@@ -56,15 +43,12 @@ class PortrayalPlugin(Star):
         self.entry_service = EntryService(self.cfg)
         self.llm = LLMService(self.cfg)
         self._cleanup_tasks: set[asyncio.Task] = set()
-        _PLUGIN = self
-        logger.info("astrbot_plugin_portrayal 已初始化 (v1.2.1)")
+        logger.info("astrbot_plugin_portrayal 已初始化 (v1.2.2)")
 
     async def initialize(self):
-        global _PLUGIN
-        _PLUGIN = self
+        pass
 
     async def terminate(self):
-        global _PLUGIN
         try:
             self.msg.save_cache()
         except Exception:
@@ -72,10 +56,8 @@ class PortrayalPlugin(Star):
         for task in list(self._cleanup_tasks):
             task.cancel()
         self._cleanup_tasks.clear()
-        if _PLUGIN is self:
-            _PLUGIN = None
 
-    # ------------------------------------------------------------------ utils
+    # ---------------------------------------------------------------- utils
     def _platform_kind(self, event: AstrMessageEvent) -> str:
         hints: list[str] = []
         try:
@@ -89,29 +71,15 @@ class PortrayalPlugin(Star):
         try:
             umo = str(event.unified_msg_origin or "")
             hints.append(umo)
-            if ":" in umo:
-                hints.append(umo.split(":", 1)[0])
-        except Exception:
-            pass
-        try:
-            hints.append(str(getattr(event, "session_id", "") or ""))
         except Exception:
             pass
         joined = " ".join(hints)
-        joined_l = joined.lower()
-        if any(k in joined for k in ("微信",)) or any(
-            k in joined_l for k in ("wechat", "weixin", "gewe", "wxid")
+        low = joined.lower()
+        if "微信" in joined or any(
+            k in low for k in ("wechat", "weixin", "gewe", "wxid")
         ):
             return "wechat"
         return normalize_platform(hints[0] if hints else "qq")
-
-    def _parse_command(self, message_str: str) -> tuple[str, str]:
-        text = (message_str or "").strip()
-        if not text:
-            return "", ""
-        text = re.sub(r"^[/／!！#＃.。]+", "", text).strip()
-        first, _, rest = text.partition(" ")
-        return first.strip(), rest.strip()
 
     def _extract_at_ids(self, event: AstrMessageEvent) -> list[str]:
         ids: list[str] = []
@@ -122,31 +90,33 @@ class PortrayalPlugin(Star):
                     if qq is not None and str(qq) not in {"", "0", "all"}:
                         ids.append(str(qq))
                     continue
-                seg_type = getattr(seg, "type", None) or (
-                    seg.get("type") if isinstance(seg, dict) else None
-                )
-                if str(seg_type).lower() in {"at", "mention"}:
-                    if isinstance(seg, dict):
-                        data = seg.get("data") or {}
-                        uid = (
-                            data.get("qq")
-                            or data.get("wxid")
-                            or data.get("user_id")
-                            or data.get("id")
-                            or seg.get("qq")
-                        )
-                    else:
-                        data = getattr(seg, "data", None) or {}
-                        if not isinstance(data, dict):
-                            data = {}
-                        uid = (
-                            data.get("qq")
-                            or data.get("wxid")
-                            or getattr(seg, "qq", None)
-                            or getattr(seg, "target", None)
-                        )
-                    if uid and str(uid) not in {"", "0", "all"}:
-                        ids.append(str(uid))
+                seg_type = str(
+                    getattr(seg, "type", None)
+                    or (seg.get("type") if isinstance(seg, dict) else "")
+                    or ""
+                ).lower()
+                if seg_type not in {"at", "mention"}:
+                    continue
+                if isinstance(seg, dict):
+                    data = seg.get("data") or {}
+                    uid = (
+                        data.get("qq")
+                        or data.get("wxid")
+                        or data.get("user_id")
+                        or data.get("id")
+                    )
+                else:
+                    data = getattr(seg, "data", None) or {}
+                    if not isinstance(data, dict):
+                        data = {}
+                    uid = (
+                        data.get("qq")
+                        or data.get("wxid")
+                        or getattr(seg, "qq", None)
+                        or getattr(seg, "target", None)
+                    )
+                if uid and str(uid) not in {"", "0", "all"}:
+                    ids.append(str(uid))
         except Exception:
             pass
         if not ids:
@@ -155,8 +125,8 @@ class PortrayalPlugin(Star):
                 ids.append(m.group(1))
             for m in re.finditer(r"@(\d{5,})", text):
                 ids.append(m.group(1))
-        seen: set[str] = set()
         out: list[str] = []
+        seen: set[str] = set()
         for i in ids:
             if i not in seen:
                 seen.add(i)
@@ -167,9 +137,9 @@ class PortrayalPlugin(Star):
         user_id = str(profile.user_id or "")
         if not user_id or profile.platform == "wechat" or not user_id.isdigit():
             return None
-        timeout = aiohttp.ClientTimeout(total=15)
         url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={user_id}&spec=640"
         try:
+            timeout = aiohttp.ClientTimeout(total=15)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url) as resp:
                     resp.raise_for_status()
@@ -184,7 +154,6 @@ class PortrayalPlugin(Star):
                 await asyncio.sleep(delay)
                 if path.exists():
                     path.unlink(missing_ok=True)
-                    logger.debug(f"已清理画像卡片：{path}")
             except Exception as e:
                 logger.debug(f"清理画像卡片失败：{e}")
 
@@ -201,7 +170,7 @@ class PortrayalPlugin(Star):
         *,
         profile: UserProfile,
         content: str,
-        command: str,
+        command: str = "画像",
         message_count: int | None = None,
         query_rounds: int | None = None,
         from_cache: bool = False,
@@ -223,7 +192,8 @@ class PortrayalPlugin(Star):
         cards_dir: Path = self.cfg.data_dir / "cards"
         cards_dir.mkdir(parents=True, exist_ok=True)
         safe_id = "".join(
-            c if c.isalnum() or c in "-_" else "_" for c in str(profile.user_id or "user")
+            c if c.isalnum() or c in "-_" else "_"
+            for c in str(profile.user_id or "user")
         )
         out_path = cards_dir / f"portrait_{safe_id}_{int(time.time())}.png"
         await asyncio.to_thread(out_path.write_bytes, png_bytes)
@@ -234,7 +204,7 @@ class PortrayalPlugin(Star):
         self, event: AstrMessageEvent, target_id: str, kind: str
     ) -> UserProfile:
         if kind == "wechat":
-            data: dict[str, Any] = {"platform": "wechat"}
+            data: dict = {"platform": "wechat"}
             try:
                 if str(event.get_sender_id()) == str(target_id):
                     nick = event.get_sender_name() or ""
@@ -262,10 +232,10 @@ class PortrayalPlugin(Star):
                     except Exception:
                         pass
             except Exception as e:
-                logger.debug(f"wechat member info fallback: {e}")
+                logger.debug(f"wechat member info: {e}")
             profile = UserProfile.from_wechat_data(target_id, data=data)
         else:
-            info: dict[str, Any] = {}
+            info: dict = {}
             try:
                 info = dict(
                     await event.bot.get_stranger_info(
@@ -286,38 +256,64 @@ class PortrayalPlugin(Star):
                     logger.warning(f"获取用户资料失败：{e}")
             profile = UserProfile.from_qq_data(target_id, data=info)
 
-        if old_profile := self.db.get(target_id):
-            profile.portrait = old_profile.portrait
-            profile.timestamp = old_profile.timestamp
-            profile.last_command = old_profile.last_command
-            profile.last_message_count = old_profile.last_message_count
-            profile.last_query_rounds = old_profile.last_query_rounds
-            profile.last_stats = dict(old_profile.last_stats or {})
+        if old := self.db.get(target_id):
+            profile.portrait = old.portrait
+            profile.timestamp = old.timestamp
+            profile.last_command = old.last_command
+            profile.last_message_count = old.last_message_count
+            profile.last_query_rounds = old.last_query_rounds
+            profile.last_stats = dict(old.last_stats or {})
         profile.platform = kind if kind in {"qq", "wechat"} else profile.platform
         return profile
 
-    async def _run_portrayal(self, event: AstrMessageEvent):
-        """画像主流程（async generator）。"""
-        cmd, rest = self._parse_command(event.message_str or "")
-        # 兼容 filter.command 触发时 message 可能只有参数
-        if not self.entry_service.get_entry(cmd):
-            # 可能是 /画像 被 command 过滤器截断，强制视为 画像
-            if "画像" in (event.message_str or "") or cmd == "":
-                cmd = "画像"
-            else:
-                # 也接受纯参数触发（@xx 30）
-                cmd = "画像"
-        prompt = self.entry_service.get_entry(cmd) or self.entry_service.get_entry("画像")
+    # ---------------------------------------------------------------- handlers
+    @filter.on_llm_request()
+    async def on_llm_request(self, event: AstrMessageEvent, req: ProviderRequest):
+        if not self.cfg.inject_prompt:
+            return
+        if not event.message_str:
+            return
+        profile = self.db.get(str(event.get_sender_id()))
+        if not profile:
+            return
+        info = profile.to_text()
+        portrait = (profile.portrait or "").strip()
+        if portrait:
+            if len(portrait) > 1200:
+                portrait = portrait[:1200] + "…"
+            info = (info + "\n\n用户画像：\n" + portrait) if info else (
+                "用户画像：\n" + portrait
+            )
+        if info:
+            req.system_prompt += f"\n\n### 当前对话用户的背景信息\n{info}\n\n"
+
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    async def collect_group_messages(self, event: AstrMessageEvent):
+        """实时采集群消息（关系网 / 微信缓存）。"""
+        try:
+            self.msg.ingest_event_message(event)
+        except Exception as e:
+            logger.debug(f"collect_group_messages: {e}")
+
+    @filter.command("画像")
+    async def get_portrayal(self, event: AstrMessageEvent):
+        """
+        画像 @群友 <查询轮数>
+        """
+        # 解析命令：AstrBot command 过滤器已去掉指令名，message 可能只剩参数
+        # 兼容完整 message_str 仍含「画像」的情况
+        raw = (event.message_str or "").strip()
+        # 去掉 wake 前缀与指令名
+        text = re.sub(r"^[/／!！#＃.。]+", "", raw).strip()
+        if text.startswith("画像"):
+            text = text[len("画像") :].strip()
+
+        prompt = self.entry_service.get_entry("画像")
         if not prompt:
             yield event.plain_result("未配置画像提示词")
             return
         if prompt.need_admin and not event.is_admin():
             return
-
-        try:
-            event.stop_event()
-        except Exception:
-            pass
 
         kind = self._platform_kind(event)
         ats = self._extract_at_ids(event)
@@ -333,18 +329,20 @@ class PortrayalPlugin(Star):
             yield event.plain_result("该用户在保护名单中，不允许查询")
             return
 
-        end_param = ""
-        if rest:
-            end_param = rest.split()[-1]
-        else:
-            parts = (event.message_str or "").split()
-            if parts:
-                end_param = parts[-1]
+        # 轮数：取最后一个 token
+        end_param = text.split()[-1] if text.split() else ""
         query_rounds = self.cfg.message.get_query_rounds(end_param)
 
         profile = await self._resolve_profile(event, target_id, kind)
+
+        yield event.plain_result(
+            f"正在查询{profile.nickname or target_id}的聊天记录（最多 {query_rounds} 轮）..."
+        )
+
         result = await self.msg.get_user_texts(
-            event, profile.user_id, max_rounds=query_rounds
+            event,
+            profile.user_id,
+            max_rounds=query_rounds,
         )
         if result.is_empty:
             if kind == "wechat":
@@ -358,12 +356,12 @@ class PortrayalPlugin(Star):
         nick = profile.nickname or target_id
         if result.from_cache and result.scanned_messages <= 0:
             yield event.plain_result(
-                f"命中缓存，已提取到{result.count}条{nick}的聊天记录，正在画像..."
+                f"命中缓存，已提取到 {result.count} 条{nick}的聊天记录，正在生成画像..."
             )
         else:
             yield event.plain_result(
-                f"已从{result.scanned_messages}条群消息中提取到"
-                f"{result.count}条{nick}的聊天记录，正在画像..."
+                f"已从 {result.scanned_messages} 条群消息中提取到 "
+                f"{result.count} 条{nick}的聊天记录，正在生成画像..."
             )
 
         try:
@@ -390,6 +388,7 @@ class PortrayalPlugin(Star):
             stats=result.stats,
         )
         self.db.set(profile)
+
         try:
             yield await self._build_portrait_image_result(
                 event,
@@ -404,99 +403,3 @@ class PortrayalPlugin(Star):
         except Exception as e:
             logger.error(f"画像图片渲染失败：{e}")
             yield event.plain_result(f"图片渲染失败：{e}")
-
-    # ------------------------------------------------------------------ handlers
-    @filter.on_llm_request()
-    async def on_llm_request(self, event: AstrMessageEvent, *args, **kwargs):
-        plug = self if isinstance(self, PortrayalPlugin) else _plugin()
-        try:
-            event = event if hasattr(event, "message_str") else _as_event(event, *args, **kwargs)
-            if event is None:
-                return
-            req = None
-            for a in args:
-                if a is not None and (
-                    isinstance(a, ProviderRequest) or hasattr(a, "system_prompt")
-                ):
-                    req = a
-                    break
-            req = req or kwargs.get("req") or kwargs.get("request")
-            if req is None or not plug.cfg.inject_prompt:
-                return
-            if not event.message_str:
-                return
-            profile = plug.db.get(str(event.get_sender_id()))
-            if not profile:
-                return
-            info = profile.to_text()
-            portrait = (profile.portrait or "").strip()
-            if portrait:
-                if len(portrait) > 1200:
-                    portrait = portrait[:1200] + "…"
-                info = (info + "\n\n用户画像：\n" + portrait) if info else (
-                    "用户画像：\n" + portrait
-                )
-            if info:
-                req.system_prompt = (getattr(req, "system_prompt", None) or "") + (
-                    "\n\n### 当前对话用户的背景信息\n" + info + "\n\n"
-                )
-        except Exception as e:
-            logger.debug(f"on_llm_request inject skip: {e}")
-
-    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
-    async def collect_group_messages(self, event: AstrMessageEvent, *args, **kwargs):
-        try:
-            plug = self if isinstance(self, PortrayalPlugin) else _plugin()
-            event = event if hasattr(event, "message_str") else _as_event(event, *args, **kwargs)
-            if event is None:
-                return
-            plug.msg.ingest_event_message(event)
-        except Exception as e:
-            logger.debug(f"collect_group_messages: {e}")
-
-    @filter.command("画像")
-    async def cmd_portrayal(self, event: AstrMessageEvent, *args, **kwargs):
-        """画像 @群友 <查询轮数>"""
-        try:
-            plug = self if isinstance(self, PortrayalPlugin) else _plugin()
-            event = event if hasattr(event, "message_str") else _as_event(event, *args, **kwargs)
-            if event is None:
-                return
-            async for ret in plug._run_portrayal(event):
-                yield ret
-        except Exception as e:
-            logger.error(f"cmd_portrayal error: {e}", exc_info=True)
-            try:
-                if event is not None:
-                    yield event.plain_result(f"画像处理异常：{e}")
-            except Exception:
-                pass
-
-    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
-    async def get_portrayal(self, event: AstrMessageEvent, *args, **kwargs):
-        """兼容 /画像 前缀与未注册到 command 列表的触发。"""
-        try:
-            plug = self if isinstance(self, PortrayalPlugin) else _plugin()
-            # 关键：AstrBot 可能把 (None, event) 或 (event, ctx) 传进来
-            if not isinstance(self, PortrayalPlugin):
-                # self 可能是 event
-                maybe_event = _as_event(self, event, *args, **kwargs)
-                if maybe_event is not None:
-                    event = maybe_event
-            else:
-                if not hasattr(event, "message_str"):
-                    event = _as_event(event, *args, **kwargs)  # type: ignore
-            if event is None:
-                return
-
-            cmd, _ = plug._parse_command(event.message_str or "")
-            if cmd != "画像":
-                # 也匹配“/画像xxx”被空格切开失败的情况
-                raw = (event.message_str or "").strip()
-                raw2 = re.sub(r"^[/／!！#＃.。]+", "", raw)
-                if not raw2.startswith("画像"):
-                    return
-            async for ret in plug._run_portrayal(event):
-                yield ret
-        except Exception as e:
-            logger.error(f"get_portrayal error: {e}", exc_info=True)

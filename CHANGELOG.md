@@ -1,5 +1,13 @@
 # 更新日志
 
+## v1.2.2
+
+修复：
+
+- 遵循 AstrBot 插件规范：command handler 仅使用 (self, event) 签名
+- 修复 `_empty() takes no arguments`（由 *args/**kwargs 被当成指令参数引起）
+- 对齐上游 Zhalslar 的 filter.command / on_llm_request 写法
+
 ## v1.2.1
 
 修复：
