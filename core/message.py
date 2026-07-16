@@ -16,6 +16,7 @@ from .config import PluginConfig
 from .message_cache import CachedMessages, MessageCacheStorage
 from .model import normalize_platform
 from .stats import ActivityStats, compute_activity_stats
+from .text_clean import clean_message_text
 
 
 @dataclass
@@ -262,7 +263,7 @@ class MessageManager:
             user_id = str(event.get_sender_id() or "")
             if not user_id:
                 return
-            text = (event.message_str or "").strip()
+            text = clean_message_text(event.message_str or "")
             if not text:
                 return
             # 跳过命令触发本身
@@ -370,6 +371,7 @@ class MessageManager:
                 text = "".join(parts).strip()
                 mentions = _extract_mentions_from_segments(body)
                 mentions.extend(_extract_mentions_from_text(text))
+            text = clean_message_text(text)
             if not text:
                 continue
             # unique mentions
@@ -487,6 +489,16 @@ class MessageManager:
         target_id: str = "",
     ) -> MessageQueryResult:
         samples = cached.ensure_samples()[: self.cfg.max_msg_count]
+        # 读出时清洗旧缓存中的占位符
+        cleaned_samples = []
+        for item in samples:
+            t = clean_message_text(str(item.get("text") or ""))
+            if not t:
+                continue
+            ni = dict(item)
+            ni["text"] = t
+            cleaned_samples.append(ni)
+        samples = cleaned_samples
         texts = [str(item.get("text") or "") for item in samples if item.get("text")]
         if not texts:
             texts = cached.texts[: self.cfg.max_msg_count]

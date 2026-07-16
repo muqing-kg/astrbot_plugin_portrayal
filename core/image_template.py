@@ -46,6 +46,8 @@ _COMMAND_THEMES: dict[str, dict[str, tuple[int, ...]]] = {
 
 _SECTION_ICON_KIND = {
     "一句话印象": "quote",
+    "一句话总结": "quote",
+    "身份档案": "role",
     "群内人设": "role",
     "社交姿态": "social",
     "关系网": "social",
@@ -302,10 +304,38 @@ class PortraitImageTemplate:
                 if re.fullmatch(r"[\w\u4e00-\u9fff ·•、,，/|+-]+", joined) and len(joined) < 80:
                     continue
             display_sections.append(section)
-        honor_sections = [s for s in display_sections if s.get("title") in _HONOR_TITLES]
-        if honor_sections:
-            display_sections = [s for s in display_sections if s.get("title") not in _HONOR_TITLES]
-            display_sections.extend(honor_sections)
+        # 固定正文顺序（美观 + 阅读逻辑）
+        _SECTION_ORDER = [
+            "群内人设",
+            "性格标签",
+            "身份档案",
+            "语言风格",
+            "社交姿态",
+            "关系网",
+            "互动关系",
+            "兴趣与话题",
+            "兴趣与价值",
+            "名场面与荣誉",
+            "群荣誉",
+            "群荣誉（黑称）",
+            "性格特质",
+            "优势分析",
+            "缺点分析",
+            "隐藏闪光点",
+            "摩擦触发点",
+            "核心缺陷",
+            "风险与雷区",
+            "相处建议",
+            "相处避坑",
+            "一句话总结",
+        ]
+        order_index = {name: i for i, name in enumerate(_SECTION_ORDER)}
+
+        def _sec_key(sec: dict) -> tuple:
+            title = sec.get("title") or ""
+            return (order_index.get(title, 500), title)
+
+        display_sections.sort(key=_sec_key)
 
         y = pad_t
         header_h = 148
@@ -742,6 +772,8 @@ class PortraitImageTemplate:
         # (grad, bar_rgb, icon_rgb)
         palettes = {
             "群内人设": ([(244, 240, 255), (255, 240, 248)], (186, 160, 220), (168, 138, 210)),
+            "身份档案": ([(245, 242, 255), (255, 244, 250)], (170, 150, 215), (150, 130, 200)),
+            "一句话总结": ([(255, 240, 246), (244, 236, 255)], (220, 140, 180), (200, 120, 165)),
             "语言风格": ([(255, 236, 244), (236, 232, 255)], (230, 150, 188), (210, 130, 175)),
             "社交姿态": ([(236, 244, 255), (244, 236, 255)], (140, 170, 230), (120, 150, 215)),
             "关系网": ([(240, 246, 255), (248, 240, 255)], (130, 160, 220), (110, 140, 205)),
@@ -968,11 +1000,17 @@ class PortraitImageTemplate:
             except Exception:
                 avatar = None
         if avatar is None:
+            # 中性占位：简笔头像，避免数字/字母误导
             draw.ellipse(box, fill=placeholder_bg)
-            initial = (nickname[:1] or "?").upper()
-            bbox = draw.textbbox((0, 0), initial, font=font)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            draw.text((x0 + (size - tw) / 2, y0 + (size - th) / 2 - 4), initial, font=font, fill=placeholder_fg)
+            cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+            r = size * 0.18
+            draw.ellipse((cx - r, cy - size * 0.22, cx + r, cy - size * 0.02), fill=placeholder_fg)
+            draw.pieslice(
+                (cx - size * 0.28, cy - size * 0.02, cx + size * 0.28, cy + size * 0.32),
+                start=200,
+                end=340,
+                fill=placeholder_fg,
+            )
             return
         mask = Image.new("L", (size, size), 0)
         ImageDraw.Draw(mask).ellipse((0, 0, size, size), fill=255)

@@ -31,6 +31,8 @@ from .core.image_template import render_portrait_image
 from .core.llm import LLMService
 from .core.message import MessageManager
 from .core.model import UserProfile, normalize_platform
+from .core.avatar import AvatarService, pick_display_name
+from .core.text_clean import clean_message_text
 
 
 class PortrayalPlugin(Star):
@@ -42,8 +44,9 @@ class PortrayalPlugin(Star):
         self.msg = MessageManager(self.cfg)
         self.entry_service = EntryService(self.cfg)
         self.llm = LLMService(self.cfg)
+        self.avatars = AvatarService()
         self._cleanup_tasks: set[asyncio.Task] = set()
-        logger.info("astrbot_plugin_portrayal 已初始化 (v1.2.2)")
+        logger.info("astrbot_plugin_portrayal 已初始化 (v1.3.0)")
 
     async def initialize(self):
         pass
@@ -133,20 +136,21 @@ class PortrayalPlugin(Star):
                 out.append(i)
         return out
 
-    async def _fetch_avatar_bytes(self, profile: UserProfile) -> bytes | None:
-        user_id = str(profile.user_id or "")
-        if not user_id or profile.platform == "wechat" or not user_id.isdigit():
-            return None
-        url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={user_id}&spec=640"
+    async def _fetch_avatar_bytes(
+        self, event: AstrMessageEvent, profile: UserProfile
+    ) -> bytes | None:
+        """群画像头像：优先协议端（微信 wx.qlogo），QQ 回退 CDN。"""
         try:
-            timeout = aiohttp.ClientTimeout(total=15)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url) as resp:
-                    resp.raise_for_status()
-                    return await resp.read()
-        except Exception as e:
-            logger.warning(f"下载用户头像失败：{e}")
-            return None
+            group_id = str(event.get_group_id() or "")
+        except Exception:
+            group_id = ""
+        return await self.avatars.get_user_avatar_bytes(
+            event,
+            str(profile.user_id or ""),
+            platform=getattr(profile, "platform", "qq") or "qq",
+            group_id=group_id or None,
+        )
+
 
     def _schedule_card_cleanup(self, path: Path, delay: float = 30.0) -> None:
         async def _cleanup() -> None:
@@ -176,7 +180,7 @@ class PortrayalPlugin(Star):
         from_cache: bool = False,
         activity=None,
     ):
-        avatar_bytes = await self._fetch_avatar_bytes(profile)
+        avatar_bytes = await self._fetch_avatar_bytes(event, profile)
         png_bytes = await asyncio.to_thread(
             render_portrait_image,
             profile=profile,
@@ -203,58 +207,80 @@ class PortrayalPlugin(Star):
     async def _resolve_profile(
         self, event: AstrMessageEvent, target_id: str, kind: str
     ) -> UserProfile:
+        member_data: dict = {}
+        try:
+            bot = event.bot
+            gid = event.get_group_id()
+            if hasattr(bot, "get_group_member_info"):
+                try:
+                    raw = await bot.get_group_member_info(
+                        group_id=int(gid) if str(gid).isdigit() else gid,
+                        user_id=int(target_id) if str(target_id).isdigit() else target_id,
+                    )
+                    if isinstance(raw, dict):
+                        member_data = dict(raw.get("data") or raw)
+                except Exception:
+                    pass
+            if not member_data and hasattr(bot, "api") and hasattr(bot.api, "call_action"):
+                try:
+                    raw = await bot.api.call_action(
+                        "get_group_member_info",
+                        group_id=gid,
+                        user_id=target_id if not str(target_id).isdigit() else int(target_id),
+                    )
+                    if isinstance(raw, dict):
+                        member_data = dict(raw.get("data") or raw)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug(f"member info: {e}")
+
         if kind == "wechat":
-            data: dict = {"platform": "wechat"}
+            data = {"platform": "wechat", **member_data}
             try:
                 if str(event.get_sender_id()) == str(target_id):
                     nick = event.get_sender_name() or ""
-                    if nick:
+                    if nick and not data.get("nickname"):
                         data["nickname"] = nick
             except Exception:
                 pass
-            bot = event.bot
+            # stranger/user info may bring avatar_url
             try:
-                if hasattr(bot, "get_group_member_info"):
-                    info = await bot.get_group_member_info(
-                        group_id=event.get_group_id(), user_id=target_id
-                    )
-                    if isinstance(info, dict):
-                        data.update(info)
-                elif hasattr(bot, "api") and hasattr(bot.api, "call_action"):
-                    try:
-                        info = await bot.api.call_action(
-                            "get_group_member_info",
-                            group_id=event.get_group_id(),
-                            user_id=target_id,
-                        )
-                        if isinstance(info, dict):
-                            data.update(info)
-                    except Exception:
-                        pass
-            except Exception as e:
-                logger.debug(f"wechat member info: {e}")
+                bot = event.bot
+                if hasattr(bot, "api") and hasattr(bot.api, "call_action"):
+                    for act in ("get_stranger_info", "get_user_info"):
+                        try:
+                            raw = await bot.api.call_action(
+                                act,
+                                user_id=int(target_id) if str(target_id).isdigit() else target_id,
+                            )
+                            if isinstance(raw, dict):
+                                payload = raw.get("data") if isinstance(raw.get("data"), dict) else raw
+                                data.update(payload)
+                                break
+                        except Exception:
+                            continue
+            except Exception:
+                pass
             profile = UserProfile.from_wechat_data(target_id, data=data)
+            display = pick_display_name(data, fallback=profile.nickname or target_id)
         else:
-            info: dict = {}
+            info: dict = dict(member_data)
             try:
-                info = dict(
+                info2 = dict(
                     await event.bot.get_stranger_info(
                         user_id=int(target_id), no_cache=True
                     )
                     or {}
                 )
+                info.update(info2)
             except Exception:
-                try:
-                    info = dict(
-                        await event.bot.get_group_member_info(
-                            group_id=int(event.get_group_id()),
-                            user_id=int(target_id),
-                        )
-                        or {}
-                    )
-                except Exception as e:
-                    logger.warning(f"获取用户资料失败：{e}")
+                pass
             profile = UserProfile.from_qq_data(target_id, data=info)
+            display = pick_display_name(info, fallback=profile.nickname or target_id)
+
+        if display:
+            profile.nickname = display
 
         if old := self.db.get(target_id):
             profile.portrait = old.portrait

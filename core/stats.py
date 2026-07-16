@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
 
+from .text_clean import clean_message_text, is_noise_token
+
 
 _STOPWORDS = {
     "的",
@@ -327,6 +329,14 @@ def normalize_samples(values: list[Any]) -> list[MessageSample]:
 
 def compute_activity_stats(values: list[Any], *, top_n: int = 10) -> ActivityStats:
     samples = normalize_samples(values)
+    # 清洗占位文本
+    cleaned = []
+    for s in samples:
+        t = clean_message_text(s.text)
+        if t:
+            s.text = t
+            cleaned.append(s)
+    samples = cleaned
     if not samples:
         return ActivityStats()
 
@@ -418,7 +428,7 @@ def _extract_top_words(texts: list[str], *, top_n: int = 10) -> list[str]:
         # 2-4 字中文片段 + 英文词
         for token in re.findall(r"[\u4e00-\u9fff]{2,4}|[A-Za-z]{2,12}", text):
             key = token.lower() if re.fullmatch(r"[A-Za-z]+", token) else token
-            if key in _STOPWORDS or key.isdigit():
+            if key in _STOPWORDS or key.isdigit() or is_noise_token(key):
                 continue
             if len(key) < 2:
                 continue
@@ -432,11 +442,11 @@ def _extract_catchphrases(texts: list[str], *, top_n: int = 5) -> list[str]:
     counter: Counter[str] = Counter()
     for text in texts:
         cleaned = re.sub(r"\s+", "", text or "")
-        if 2 <= len(cleaned) <= 8 and cleaned not in _STOPWORDS:
+        if 2 <= len(cleaned) <= 8 and cleaned not in _STOPWORDS and not is_noise_token(cleaned):
             counter[cleaned] += 1
         for part in re.split(r"[，,。！!？?、；;：:\s]+", text or ""):
             part = re.sub(r"\s+", "", (part or "").strip())
-            if 2 <= len(part) <= 8 and part not in _STOPWORDS:
+            if 2 <= len(part) <= 8 and part not in _STOPWORDS and not is_noise_token(part):
                 counter[part] += 1
     result: list[str] = []
     for word, cnt in counter.most_common(50):
