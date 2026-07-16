@@ -224,22 +224,7 @@ class MessageManager:
                 from_cache=True,
             )
 
-        # 微信等平台：优先用实时缓存，不强行拉历史（多数协议无完整历史）
-        if kind == "wechat":
-            if cached and cached.texts:
-                return self._result_from_cache(
-                    cached,
-                    scanned_messages=0,
-                    from_cache=True,
-                )
-            return MessageQueryResult(
-                texts=[],
-                scanned_messages=0,
-                from_cache=False,
-                samples=[],
-                stats=ActivityStats(),
-            )
-
+        # 微信原生协议往往无历史；若经 aiocqhttp 桥接则下面会尝试拉历史，失败再回退缓存
         texts = cached.texts[:] if cached else []
         rounds = 0
         cache_changed = False

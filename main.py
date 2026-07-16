@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import asyncio
+import re
 import time
 from pathlib import Path
 
@@ -44,27 +45,47 @@ class PortrayalPlugin(Star):
         self._cleanup_tasks.clear()
 
     def _platform_kind(self, event: AstrMessageEvent) -> str:
-        plat = ""
+        """识别 qq / wechat。微信经 aiocqhttp 桥接时 platform 可能仍是 aiocqhttp。"""
+        hints: list[str] = []
         try:
-            plat = event.get_platform_name() or ""
-        except Exception:
-            plat = ""
-        if not plat:
-            try:
-                plat = str(event.get_platform_id() or "")
-            except Exception:
-                plat = ""
-        # unified_msg_origin 里常含平台前缀
-        try:
-            umo = str(event.unified_msg_origin or "")
-            if ":" in umo:
-                plat = plat or umo.split(":", 1)[0]
+            hints.append(str(event.get_platform_name() or ""))
         except Exception:
             pass
-        return normalize_platform(plat)
+        try:
+            hints.append(str(event.get_platform_id() or ""))
+        except Exception:
+            pass
+        try:
+            umo = str(event.unified_msg_origin or "")
+            hints.append(umo)
+            if ":" in umo:
+                hints.append(umo.split(":", 1)[0])
+        except Exception:
+            pass
+        try:
+            meta = getattr(event, "session_id", None) or ""
+            hints.append(str(meta))
+        except Exception:
+            pass
+
+        joined = " ".join(hints).lower()
+        # 中文/英文微信特征优先
+        if any(k in joined for k in ("微信", "wechat", "weixin", "gewe", "wxid")):
+            return "wechat"
+        return normalize_platform(hints[0] if hints else "qq")
+
+    def _parse_command(self, message_str: str) -> tuple[str, str]:
+        """返回 (command, rest)。支持 /画像、画像 前缀。"""
+        text = (message_str or "").strip()
+        if not text:
+            return "", ""
+        # 去掉常见命令前缀
+        text = re.sub(r"^[/／!！#＃.。]+", "", text).strip()
+        first, _, rest = text.partition(" ")
+        return first.strip(), rest.strip()
 
     def _extract_at_ids(self, event: AstrMessageEvent) -> list[str]:
-        """兼容 QQ At 组件与微信 @ 文本。"""
+        """兼容 QQ At 组件、消息段 dict、纯文本 [At:id]。"""
         ids: list[str] = []
         try:
             for seg in event.get_messages():
@@ -72,47 +93,72 @@ class PortrayalPlugin(Star):
                     qq = getattr(seg, "qq", None) or getattr(seg, "target", None)
                     if qq is not None and str(qq) not in {"", "0", "all"}:
                         ids.append(str(qq))
-                # 部分微信适配把 at 做成 dict-like
-                elif isinstance(seg, dict) and str(seg.get("type") or "") in {"at", "mention"}:
-                    data = seg.get("data") or {}
-                    uid = data.get("qq") or data.get("wxid") or data.get("user_id") or data.get("id")
-                    if uid:
+                    continue
+                # 部分适配把 at 做成对象属性
+                seg_type = getattr(seg, "type", None) or (
+                    seg.get("type") if isinstance(seg, dict) else None
+                )
+                if str(seg_type).lower() in {"at", "mention"}:
+                    if isinstance(seg, dict):
+                        data = seg.get("data") or {}
+                        uid = (
+                            data.get("qq")
+                            or data.get("wxid")
+                            or data.get("user_id")
+                            or data.get("id")
+                            or seg.get("qq")
+                        )
+                    else:
+                        data = getattr(seg, "data", None) or {}
+                        if not isinstance(data, dict):
+                            data = {}
+                        uid = (
+                            data.get("qq")
+                            or data.get("wxid")
+                            or getattr(seg, "qq", None)
+                            or getattr(seg, "target", None)
+                        )
+                    if uid and str(uid) not in {"", "0", "all"}:
                         ids.append(str(uid))
         except Exception:
             pass
 
-        if ids:
-            return ids
+        # 文本兜底：[At:123] / @123
+        if not ids:
+            text = event.message_str or ""
+            for m in re.finditer(r"\[At[：:]\s*(\d+)\]", text, flags=re.I):
+                ids.append(m.group(1))
+            for m in re.finditer(r"@(\d{5,})", text):
+                ids.append(m.group(1))
 
-        # 文本兜底：@昵称（微信常见），无法可靠映射 id 时返回空
-        text = (event.message_str or "").strip()
-        if "@" in text:
-            # 尝试 message 链里找 mention name 映射失败则放弃
-            return []
-        return []
+        # 去重保序
+        seen: set[str] = set()
+        out: list[str] = []
+        for i in ids:
+            if i not in seen:
+                seen.add(i)
+                out.append(i)
+        return out
 
     async def _fetch_avatar_bytes(self, profile: UserProfile) -> bytes | None:
         user_id = str(profile.user_id or "")
         if not user_id:
             return None
+        # 纯数字才走 QQ 头像 CDN
+        if profile.platform == "wechat" or not user_id.isdigit():
+            return None
         timeout = aiohttp.ClientTimeout(total=15)
-        urls: list[str] = []
-        if profile.platform != "wechat":
-            urls.append(f"https://q4.qlogo.cn/headimg_dl?dst_uin={user_id}&spec=640")
-        # 微信头像无稳定公开 CDN，尝试空；后续可接适配器字段
-        for url in urls:
-            try:
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.get(url) as resp:
-                        resp.raise_for_status()
-                        return await resp.read()
-            except Exception as e:
-                logger.warning(f"下载用户头像失败：{e}")
-        return None
+        url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={user_id}&spec=640"
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as resp:
+                    resp.raise_for_status()
+                    return await resp.read()
+        except Exception as e:
+            logger.warning(f"下载用户头像失败：{e}")
+            return None
 
     def _schedule_card_cleanup(self, path: Path, delay: float = 30.0) -> None:
-        """发送完成后延迟删除卡片文件，避免磁盘无限增长。"""
-
         async def _cleanup() -> None:
             try:
                 await asyncio.sleep(delay)
@@ -127,7 +173,6 @@ class PortrayalPlugin(Star):
             self._cleanup_tasks.add(task)
             task.add_done_callback(self._cleanup_tasks.discard)
         except RuntimeError:
-            # 无 running loop 时忽略
             pass
 
     async def _build_portrait_image_result(
@@ -163,7 +208,6 @@ class PortrayalPlugin(Star):
         )
         out_path = cards_dir / f"portrait_{safe_id}_{int(time.time())}.png"
         await asyncio.to_thread(out_path.write_bytes, png_bytes)
-        # 发完约 30 秒后删除临时卡片
         self._schedule_card_cleanup(out_path, delay=30.0)
         return event.chain_result([Comp.Image.fromFileSystem(str(out_path))])
 
@@ -172,12 +216,13 @@ class PortrayalPlugin(Star):
     ) -> UserProfile:
         if kind == "wechat":
             data: dict = {"platform": "wechat"}
-            # 尽量从事件侧取昵称
             try:
-                nick = event.get_sender_name() if str(event.get_sender_id()) == str(target_id) else ""
+                if str(event.get_sender_id()) == str(target_id):
+                    nick = event.get_sender_name() or ""
+                    if nick:
+                        data["nickname"] = nick
             except Exception:
-                nick = ""
-            # 群成员信息（不同适配字段不一）
+                pass
             bot = event.bot
             try:
                 if hasattr(bot, "get_group_member_info"):
@@ -187,32 +232,38 @@ class PortrayalPlugin(Star):
                     if isinstance(info, dict):
                         data.update(info)
                 elif hasattr(bot, "api") and hasattr(bot.api, "call_action"):
-                    info = await bot.api.call_action(
-                        "get_group_member_info",
-                        group_id=event.get_group_id(),
-                        user_id=target_id,
-                    )
-                    if isinstance(info, dict):
-                        data.update(info)
+                    # 微信桥也可能暴露 onebot 风格接口
+                    try:
+                        info = await bot.api.call_action(
+                            "get_group_member_info",
+                            group_id=event.get_group_id(),
+                            user_id=target_id,
+                        )
+                        if isinstance(info, dict):
+                            data.update(info)
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.debug(f"wechat member info fallback: {e}")
-            if nick and not data.get("nickname"):
-                data["nickname"] = nick
             profile = UserProfile.from_wechat_data(target_id, data=data)
         else:
-            info = {}
+            info: dict = {}
             try:
-                info = await event.bot.get_stranger_info(user_id=int(target_id), no_cache=True)
-                info = dict(info or {})
+                info = dict(
+                    await event.bot.get_stranger_info(user_id=int(target_id), no_cache=True)
+                    or {}
+                )
             except Exception:
                 try:
-                    info = await event.bot.get_group_member_info(
-                        group_id=int(event.get_group_id()), user_id=int(target_id)
+                    info = dict(
+                        await event.bot.get_group_member_info(
+                            group_id=int(event.get_group_id()),
+                            user_id=int(target_id),
+                        )
+                        or {}
                     )
-                    info = dict(info or {})
                 except Exception as e:
                     logger.warning(f"获取用户资料失败：{e}")
-                    info = {}
             profile = UserProfile.from_qq_data(target_id, data=info)
 
         if old_profile := self.db.get(target_id):
@@ -225,13 +276,23 @@ class PortrayalPlugin(Star):
         return profile
 
     @filter.on_llm_request()
-    async def on_llm_request(self, event: AstrMessageEvent, req: ProviderRequest):
+    async def on_llm_request(self, event: AstrMessageEvent, *args, **kwargs):
+        # AstrBot 不同版本可能多传参数；req 取第一个 ProviderRequest
+        req = None
+        for a in args:
+            if isinstance(a, ProviderRequest) or hasattr(a, "system_prompt"):
+                req = a
+                break
+        if req is None:
+            req = kwargs.get("req") or kwargs.get("request")
+        if req is None:
+            return
         if not self.cfg.inject_prompt:
             return
         if not event.message_str:
             return
         sender_id = event.get_sender_id()
-        profile = self.db.get(sender_id)
+        profile = self.db.get(str(sender_id))
         if not profile:
             return
         info = profile.to_text()
@@ -244,29 +305,43 @@ class PortrayalPlugin(Star):
             else:
                 info = "用户画像：\n" + portrait
         if info:
-            req.system_prompt += "\n\n### 当前对话用户的背景信息\n" + info + "\n\n"
+            try:
+                req.system_prompt = (req.system_prompt or "") + (
+                    "\n\n### 当前对话用户的背景信息\n" + info + "\n\n"
+                )
+            except Exception:
+                pass
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
-    async def collect_group_messages(self, event: AstrMessageEvent):
+    async def collect_group_messages(self, event: AstrMessageEvent, *args, **kwargs):
         """全平台群消息实时采集（微信主缓存来源）。"""
-        self.msg.ingest_event_message(event)
+        try:
+            self.msg.ingest_event_message(event)
+        except Exception as e:
+            logger.debug(f"collect_group_messages: {e}")
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
-    async def get_portrayal(self, event: AstrMessageEvent):
+    async def get_portrayal(self, event: AstrMessageEvent, *args, **kwargs):
         """画像 @群友 <查询轮数> — 支持 QQ / 微信群。"""
-        cmd = (event.message_str or "").partition(" ")[0]
+        cmd, rest = self._parse_command(event.message_str or "")
         prompt = self.entry_service.get_entry(cmd)
         if not prompt:
             return
         if prompt.need_admin and not event.is_admin():
             return
 
+        # 命中命令后阻止后续 LLM 抢答
+        try:
+            event.stop_event()
+        except Exception:
+            pass
+
         kind = self._platform_kind(event)
         ats = self._extract_at_ids(event)
         if not ats:
             tip = "命令格式：画像 @群友 <查询轮数>"
             if kind == "wechat":
-                tip += "\n（微信请使用可识别的 @成员；并依赖平时群聊采集缓存）"
+                tip += "\n（请 @ 具体成员；消息缓存依赖机器人在本群在线采集）"
             yield event.plain_result(tip)
             return
 
@@ -275,7 +350,12 @@ class PortrayalPlugin(Star):
             yield event.plain_result("该用户在保护名单中，不允许查询")
             return
 
-        end_param = (event.message_str or "").split(" ")[-1]
+        # 轮数：rest 末尾数字，或整句最后一个 token
+        end_param = ""
+        if rest:
+            end_param = rest.split()[-1]
+        else:
+            end_param = (event.message_str or "").split()[-1]
         query_rounds = self.cfg.message.get_query_rounds(end_param)
 
         profile = await self._resolve_profile(event, target_id, kind)
@@ -294,15 +374,15 @@ class PortrayalPlugin(Star):
                 yield event.plain_result("没有查询到该群友的任何消息")
             return
 
+        nick = profile.nickname or target_id
         if result.from_cache and result.scanned_messages <= 0:
             yield event.plain_result(
-                f"命中缓存，已提取到{result.count}条{profile.nickname or target_id}的聊天记录，"
-                f"正在{cmd}..."
+                f"命中缓存，已提取到{result.count}条{nick}的聊天记录，正在{cmd}..."
             )
         else:
             yield event.plain_result(
                 f"已从{result.scanned_messages}条群消息中提取到"
-                f"{result.count}条{profile.nickname or target_id}的聊天记录，正在{cmd}..."
+                f"{result.count}条{nick}的聊天记录，正在{cmd}..."
             )
 
         try:
