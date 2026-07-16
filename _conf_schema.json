@@ -68,12 +68,6 @@
             }
         }
     },
-    "inject_prompt": {
-        "description": "给提示词注入画像",
-        "type": "bool",
-        "hint": "打开后，每轮对话中，若本地存有当前用户的画像，则自动将该用户画像注入到系统提示词中",
-        "default": false
-    },
     "entry_storage": {
         "description": "提示词配置",
         "hint": "可自定义多套提示词，并定义对应触发命令。由此实现不同风格的画像分析",
@@ -88,7 +82,7 @@
                         "type": "string",
                         "default": "请输入命令"
                     },
-                    "need_admin": { 
+                    "need_admin": {
                         "description": "仅管理员可用",
                         "hint": "是否需要bot管理员权限触发命令",
                         "type": "bool",

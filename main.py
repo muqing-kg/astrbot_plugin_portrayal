@@ -46,7 +46,7 @@ class PortrayalPlugin(Star):
         self.llm = LLMService(self.cfg)
         self.avatars = AvatarService()
         self._cleanup_tasks: set[asyncio.Task] = set()
-        logger.info("astrbot_plugin_portrayal 已初始化 (v1.3.2)")
+        logger.info("astrbot_plugin_portrayal 已初始化 (v1.3.3)")
 
     async def initialize(self):
         pass
@@ -293,26 +293,6 @@ class PortrayalPlugin(Star):
         return profile
 
     # ---------------------------------------------------------------- handlers
-    @filter.on_llm_request()
-    async def on_llm_request(self, event: AstrMessageEvent, req: ProviderRequest):
-        if not self.cfg.inject_prompt:
-            return
-        if not event.message_str:
-            return
-        profile = self.db.get(str(event.get_sender_id()))
-        if not profile:
-            return
-        info = profile.to_text()
-        portrait = (profile.portrait or "").strip()
-        if portrait:
-            if len(portrait) > 1200:
-                portrait = portrait[:1200] + "…"
-            info = (info + "\n\n用户画像：\n" + portrait) if info else (
-                "用户画像：\n" + portrait
-            )
-        if info:
-            req.system_prompt += f"\n\n### 当前对话用户的背景信息\n{info}\n\n"
-
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def collect_group_messages(self, event: AstrMessageEvent):
         """实时采集群消息（关系网 / 微信缓存）。"""

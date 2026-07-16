@@ -139,7 +139,6 @@ class MessageConfig(ConfigNode):
 class PluginConfig(ConfigNode):
     llm: LLMConfig
     message: MessageConfig
-    inject_prompt: bool
     entry_storage: list[dict[str, Any]]
 
     _plugin_name: str = "astrbot_plugin_portrayal"
