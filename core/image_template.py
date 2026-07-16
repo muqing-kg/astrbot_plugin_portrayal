@@ -189,7 +189,7 @@ class PortraitCardData:
     catchphrases: list[str] = field(default_factory=list)
     period_bars: list[tuple[str, float]] = field(default_factory=list)
     avatar_bytes: bytes | None = None
-    footer: str = "astrbot_plugin_portrayal"
+    footer: str = "模版作者 沐沐沐倾丶"
     generated_at: str = ""
     platform: str = "qq"
 
@@ -1139,7 +1139,8 @@ class PortraitImageTemplate:
 
     @staticmethod
     def _build_footer(data: PortraitCardData) -> str:
-        parts = [data.footer or "astrbot_plugin_portrayal"]
+        # 底部署名：模版作者固定展示
+        parts = [data.footer or "模版作者 沐沐沐倾丶"]
         # 仅 QQ 在页脚带账号；微信不带任何账号数字
         if getattr(data, "platform", "qq") == "qq" and data.meta_items:
             for item in data.meta_items:
