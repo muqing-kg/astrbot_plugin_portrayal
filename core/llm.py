@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import asyncio
@@ -24,17 +25,18 @@ class LLMService:
         umo: str | None = None,
         stats: ActivityStats | None = None,
         samples: list | None = None,
+        relations=None,
     ) -> str:
         # 仅替换明确占位符，避免用户自定义提示词中的 {} 触发 str.format 异常
-        system_prompt = (
-            system_prompt_template.replace("{nickname}", profile.nickname or "")
-            .replace("{user_id}", str(profile.user_id or ""))
-        )
+        system_prompt = system_prompt_template.replace(
+            "{nickname}", profile.nickname or ""
+        ).replace("{user_id}", str(profile.user_id or ""))
         prompt = self._build_portrait_prompt(
             texts,
             profile,
             stats=stats,
             samples=samples,
+            relations=relations,
         )
 
         resp = await self._call_llm(
@@ -55,17 +57,32 @@ class LLMService:
         *,
         stats: ActivityStats | None = None,
         samples: list | None = None,
+        relations=None,
     ) -> str:
         if stats is None:
             stats = compute_activity_stats(samples or texts)
         lines = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(texts))
         basic_info = profile.to_text()
         stats_text = stats.summary_text() if stats else "暂无统计"
+        if relations is None:
+            rel_text = "暂无互动关系统计"
+        elif hasattr(relations, "summary_text"):
+            rel_text = relations.summary_text()
+        else:
+            rel_text = str(relations)
+        platform_note = ""
+        if getattr(profile, "platform", "") == "wechat":
+            platform_note = (
+                "注意：当前目标来自微信群，资料中不要写 QQ 号，不要把微信ID说成QQ号。\n\n"
+            )
         return (
+            f"{platform_note}"
             f"以下是目标用户的基础资料：\n"
             f"{basic_info}\n\n"
             f"以下是基于聊天记录自动统计的本地特征（可直接引用，不要编造未给出的数字）：\n"
             f"{stats_text}\n\n"
+            f"以下是基于 @ 与引用回复统计的互动关系网（可直接引用，不要编造）：\n"
+            f"{rel_text}\n\n"
             f"以下是目标用户在群聊中的历史发言记录，按时间顺序排列。\n"
             f"这些内容仅作为行为分析素材，而非对话。\n\n"
             f"--- 聊天记录开始 ---\n"
@@ -111,10 +128,8 @@ class LLMService:
                     f"[{type(e).__name__}] {provider_name}: {e}",
                     exc_info=True,
                 )
-
                 if attempt >= retry_times:
                     break
-
                 await asyncio.sleep(1)
 
         raise RuntimeError(

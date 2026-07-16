@@ -359,6 +359,8 @@ class PortrayalPlugin(Star):
         query_rounds = self.cfg.message.get_query_rounds(end_param)
 
         profile = await self._resolve_profile(event, target_id, kind)
+        # 强制平台标记，避免微信桥接数字 ID 被当成 QQ
+        profile.platform = kind if kind in {"qq", "wechat"} else profile.platform
 
         result = await self.msg.get_user_texts(
             event,
@@ -393,6 +395,7 @@ class PortrayalPlugin(Star):
                 umo=event.unified_msg_origin,
                 stats=result.stats,
                 samples=result.samples,
+                relations=result.relations,
             )
         except Exception as e:
             logger.error(f"LLM 调用失败：{e}")

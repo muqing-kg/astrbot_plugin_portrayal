@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import json
@@ -10,11 +11,7 @@ from astrbot.api import logger
 
 @dataclass
 class CachedMessages:
-    """Store cached messages for one user.
-
-    Prefer rich samples with timestamps when available. Keep ``texts`` for
-    backward compatibility with older cache files and callers.
-    """
+    """Store cached messages for one user."""
 
     texts: list[str]
     timestamp: float
@@ -23,14 +20,31 @@ class CachedMessages:
     def ensure_samples(self) -> list[dict[str, Any]]:
         if self.samples:
             return self.samples
-        return [{"text": text, "timestamp": 0} for text in self.texts]
+        return [
+            {"text": text, "timestamp": 0, "mentions": [], "reply_to": ""}
+            for text in self.texts
+        ]
 
-    def append_message(self, text: str, msg_timestamp: int = 0) -> None:
+    def append_message(
+        self,
+        text: str,
+        msg_timestamp: int = 0,
+        *,
+        mentions: list[str] | None = None,
+        reply_to: str = "",
+    ) -> None:
         text = (text or "").strip()
         if not text:
             return
         self.texts.append(text)
-        self.samples.append({"text": text, "timestamp": int(msg_timestamp or 0)})
+        self.samples.append(
+            {
+                "text": text,
+                "timestamp": int(msg_timestamp or 0),
+                "mentions": [str(x) for x in (mentions or []) if str(x).strip()],
+                "reply_to": str(reply_to or "").strip(),
+            }
+        )
 
 
 class MessageCacheStorage:
@@ -39,14 +53,15 @@ class MessageCacheStorage:
     def __init__(self, cache_dir: Path):
         self.file = cache_dir / "message_cache.json"
 
-    def load(self) -> tuple[dict[str, CachedMessages], dict[str, int]]:
+    def load(self) -> tuple[dict[str, CachedMessages], dict[str, int], dict[str, str]]:
         if not self.file.exists():
-            return {}, {}
+            return {}, {}, {}
 
         try:
             payload: dict[str, Any] = json.loads(self.file.read_text(encoding="utf-8"))
             raw_users = payload.get("users", {})
             raw_cursors = payload.get("group_cursors", {})
+            raw_nicks = payload.get("nicknames", {}) or {}
             if not isinstance(raw_users, dict) or not isinstance(raw_cursors, dict):
                 raise ValueError("Invalid message cache structure")
 
@@ -75,9 +90,24 @@ class MessageCacheStorage:
                             ts = int(item.get("timestamp") or 0)
                         except (TypeError, ValueError):
                             ts = 0
-                        clean_samples.append({"text": text, "timestamp": ts})
+                        mentions_raw = item.get("mentions") or []
+                        mentions: list[str] = []
+                        if isinstance(mentions_raw, list):
+                            mentions = [str(x) for x in mentions_raw if str(x).strip()]
+                        reply_to = str(item.get("reply_to") or "").strip()
+                        clean_samples.append(
+                            {
+                                "text": text,
+                                "timestamp": ts,
+                                "mentions": mentions,
+                                "reply_to": reply_to,
+                            }
+                        )
                 if not clean_samples and texts:
-                    clean_samples = [{"text": t, "timestamp": 0} for t in texts]
+                    clean_samples = [
+                        {"text": t, "timestamp": 0, "mentions": [], "reply_to": ""}
+                        for t in texts
+                    ]
                 users[key] = CachedMessages(
                     texts=texts,
                     timestamp=float(timestamp),
@@ -89,19 +119,26 @@ class MessageCacheStorage:
                 for group_id, cursor in raw_cursors.items()
                 if isinstance(cursor, int)
             }
-            return users, cursors
+            nicks = {
+                str(k): str(v)
+                for k, v in raw_nicks.items()
+                if isinstance(k, str) and str(v).strip()
+            }
+            return users, cursors, nicks
         except Exception as e:
             logger.warning(f"Failed to load message cache: {e}")
-            return {}, {}
+            return {}, {}, {}
 
     def save(
         self,
         users: dict[str, CachedMessages],
         group_cursors: dict[str, int],
+        nicknames: dict[str, str] | None = None,
     ) -> None:
         payload = {
             "users": {key: asdict(value) for key, value in users.items()},
             "group_cursors": group_cursors,
+            "nicknames": nicknames or {},
         }
         temporary_file = self.file.with_suffix(".tmp")
         try:

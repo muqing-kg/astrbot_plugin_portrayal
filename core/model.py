@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from dataclasses import asdict, dataclass, fields
 from typing import Any
 
@@ -59,7 +60,6 @@ class UserProfile:
     # qq / wechat / generic
     platform: str = "qq"
 
-    # 最近一次生成画像时的附属信息（兼容旧 JSON 无字段）
     last_command: str = ""
     last_message_count: int = 0
     last_query_rounds: int = 0
@@ -86,7 +86,7 @@ class UserProfile:
         if not self.user_id:
             return ""
         if self.platform == "wechat":
-            return f"微信 {self.user_id}"
+            return ""  # 微信永不展示账号 chip
         if self.platform == "qq":
             return f"QQ {self.user_id}"
         return f"ID {self.user_id}"
@@ -97,7 +97,6 @@ class UserProfile:
 
     def to_dict(self) -> dict:
         data = asdict(self)
-        # 空统计不写 null，统一写成 {}
         if not data.get("last_stats"):
             data["last_stats"] = {}
         return data
@@ -123,7 +122,6 @@ class UserProfile:
         query_rounds: int = 0,
         stats: Any = None,
     ) -> None:
-        """写入最近一次生成画像的元数据与本地统计快照。"""
         self.last_command = str(command or "") or self.last_command
         if message_count:
             self.last_message_count = int(message_count)
@@ -137,12 +135,7 @@ class UserProfile:
             self.last_stats = dict(stats)
 
     @classmethod
-    def from_qq_data(
-        cls,
-        user_id: str,
-        *,
-        data: dict[str, Any],
-    ) -> "UserProfile":
+    def from_qq_data(cls, user_id: str, *, data: dict[str, Any]) -> "UserProfile":
         return cls(
             user_id=str(user_id),
             nickname=data.get("nickname", "") or data.get("card", "") or "",
@@ -157,27 +150,18 @@ class UserProfile:
         )
 
     @classmethod
-    def from_wechat_data(
-        cls,
-        user_id: str,
-        *,
-        data: dict[str, Any],
-    ) -> "UserProfile":
-        """从微信侧资料字段构建画像。
-
-        兼容常见别名：wxid / username / nickname / remark / signature / region 等。
-        """
+    def from_wechat_data(cls, user_id: str, *, data: dict[str, Any]) -> "UserProfile":
         nickname = (
             data.get("nickname")
             or data.get("nick_name")
             or data.get("display_name")
             or data.get("name")
+            or data.get("card")
             or ""
         )
         remark = data.get("remark") or data.get("remark_name") or data.get("alias") or ""
         sex = data.get("sex") or data.get("gender") or data.get("sex_type") or ""
         birthday = data.get("birthday") or data.get("birth") or ""
-        # 微信常把省市拆开，优先拼完整地区
         region_parts = [
             str(data.get("country") or "").strip(),
             str(data.get("province") or "").strip(),
@@ -193,7 +177,6 @@ class UserProfile:
             or data.get("country")
             or ""
         )
-
         signature = (
             data.get("signature")
             or data.get("long_nick")
@@ -207,7 +190,6 @@ class UserProfile:
             or str(data.get("username") or "")
             or str(data.get("user_id") or "")
         )
-
         return cls(
             user_id=wx_id,
             nickname=str(nickname),
@@ -229,7 +211,6 @@ class UserProfile:
         data: dict[str, Any],
         platform: str | None = None,
     ) -> "UserProfile":
-        """按平台选择 QQ / 微信字段映射。"""
         kind = normalize_platform(platform or data.get("platform"))
         if kind == "wechat":
             return cls.from_wechat_data(user_id, data=data)
@@ -244,43 +225,55 @@ class UserProfile:
         return profile
 
     def to_text(self) -> str:
-        meta = (
-            ("user_id", self.id_label),
-            ("nickname", "昵称"),
-            ("remark", "备注"),
-            ("sex", "性别"),
-            ("birthday", "生日"),
-            ("phoneNum", "电话"),
-            ("eMail", "邮箱"),
-            ("address", "地区" if self.platform == "wechat" else "现居"),
-            ("long_nick", self.signature_label),
-        )
+        if self.platform == "wechat":
+            meta = (
+                ("nickname", "昵称"),
+                ("remark", "备注"),
+                ("sex", "性别"),
+                ("address", "地区"),
+                ("long_nick", self.signature_label),
+            )
+        else:
+            meta = (
+                ("user_id", self.id_label),
+                ("nickname", "昵称"),
+                ("remark", "备注"),
+                ("sex", "性别"),
+                ("birthday", "生日"),
+                ("phoneNum", "电话"),
+                ("eMail", "邮箱"),
+                ("address", "现居"),
+                ("long_nick", self.signature_label),
+            )
 
         lines = [
             f"{label}：{value}"
             for key, label in meta
             if (value := getattr(self, key)) not in ("", None, 0)
         ]
-
+        if self.platform == "wechat":
+            lines.insert(0, "平台：微信")
+        elif self.platform == "qq":
+            lines.insert(0, "平台：QQ")
         return "\n".join(lines)
 
     def to_chips(self, *, max_items: int = 6) -> list[str]:
         """生成卡片顶部资料 chips。
 
-        微信场景不展示 chips（账号/性别/签名等对微信侧无用或不宜露出）。
-        QQ 场景保留账号与基础资料标签。
+        微信：不展示任何账号类信息（尤其不要 QQ 号）。
+        QQ：展示 QQ 号与基础资料。
         """
         if self.platform == "wechat":
-            return []
-
-        candidates = [
-            self.id_chip,
-            self.sex,
-            self.birthday,
-            self.remark,
-            self.long_nick,
-            self.address,
-        ]
+            candidates = [self.sex, self.remark, self.address]
+        else:
+            candidates = [
+                self.id_chip,
+                self.sex,
+                self.birthday,
+                self.remark,
+                self.long_nick,
+                self.address,
+            ]
         chips: list[str] = []
         for value in candidates:
             text = str(value or "").strip()

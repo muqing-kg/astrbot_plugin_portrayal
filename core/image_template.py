@@ -48,6 +48,8 @@ _SECTION_ICON_KIND = {
     "一句话印象": "quote",
     "群内人设": "role",
     "社交姿态": "social",
+    "关系网": "social",
+    "互动关系": "social",
     "互动姿态": "social",
     "群内姿态": "social",
     "性格标签": "tag",
@@ -104,7 +106,9 @@ def extract_tags(content: str, *, limit: int = 10) -> list[str]:
             return
         banned = {
             "性格标签", "优势分析", "缺点分析", "相处建议", "相处避坑", "隐藏闪光点",
-            "核心性格缺陷", "核心缺陷", "一句话印象", "群内人设", "社交姿态", "互动姿态",
+            "核心性格缺陷", "核心缺陷", "一句话印象", "群内人设", "社交姿态",
+                "关系网",
+                "互动关系", "互动姿态",
             "活跃画像", "语言风格", "兴趣与话题", "兴趣与价值", "性格特质", "名场面与荣誉",
             "摩擦触发点", "风险与雷区", "群荣誉", "群荣誉（黑称）",
         }
@@ -740,6 +744,8 @@ class PortraitImageTemplate:
             "群内人设": ([(244, 240, 255), (255, 240, 248)], (186, 160, 220), (168, 138, 210)),
             "语言风格": ([(255, 236, 244), (236, 232, 255)], (230, 150, 188), (210, 130, 175)),
             "社交姿态": ([(236, 244, 255), (244, 236, 255)], (140, 170, 230), (120, 150, 215)),
+            "关系网": ([(240, 246, 255), (248, 240, 255)], (130, 160, 220), (110, 140, 205)),
+            "互动关系": ([(240, 246, 255), (248, 240, 255)], (130, 160, 220), (110, 140, 205)),
             "兴趣与话题": ([(240, 255, 246), (255, 244, 236)], (120, 190, 160), (90, 170, 140)),
             "兴趣与价值": ([(240, 255, 246), (255, 244, 236)], (120, 190, 160), (90, 170, 140)),
             "性格特质": ([(244, 240, 255), (255, 240, 248)], (170, 150, 220), (150, 128, 205)),
@@ -1096,11 +1102,14 @@ class PortraitImageTemplate:
     @staticmethod
     def _build_footer(data: PortraitCardData) -> str:
         parts = [data.footer or "astrbot_plugin_portrayal"]
-        if data.meta_items:
+        # 仅 QQ 在页脚带账号；微信不带任何账号数字
+        if getattr(data, "platform", "qq") == "qq" and data.meta_items:
             for item in data.meta_items:
-                if item.startswith(("QQ ", "微信 ", "ID ")):
+                if item.startswith(("QQ ", "ID ")):
                     parts.append(item)
                     break
+        if getattr(data, "platform", "") == "wechat":
+            parts.append("微信")
         if data.generated_at:
             parts.append(data.generated_at)
         return "  ·  ".join(parts)
