@@ -1,0 +1,107 @@
+{
+    "llm": {
+        "description": "LLM配置",
+        "type": "object",
+        "items": {
+            "provider_id": {
+                "description": "用于分析画像的LLM提供商",
+                "hint": "留空或者填写的提供商不存在时, 则使用当前正在使用的LLM提供商",
+                "type": "string",
+                "default": "",
+                "_special": "select_provider"
+            },
+            "retry_times": {
+                "description": "LLM调用失败重试次数",
+                "type": "int",
+                "hint": "LLM调用失败时, 重试的次数",
+                "slider": {
+                    "min": 1,
+                    "max": 5,
+                    "step": 1
+                },
+                "default": 2
+            }
+        }
+    },
+    "message": {
+        "description": "消息查询配置",
+        "type": "object",
+        "items": {
+            "default_query_rounds": {
+                "description": "获取群消息的默认轮询次数",
+                "type": "int",
+                "hint": "每轮固定获取200条群消息, 此处指定轮询多少次。也可用命令 “画像 @群友 轮数” 可实时指定轮数",
+                "slider": {
+                    "min": 1,
+                    "max": 100,
+                    "step": 5
+                },
+                "default": 50
+            },
+            "max_msg_count": {
+                "description": "用于分析的最大消息量(条)",
+                "type": "int",
+                "hint": "轮询过程中， 获取的群消息数提前达到了最大消息量时，中断轮询。注意：用于分析的消息量越多, 画像越准确, 但需要消耗更多时间和Token",
+                "slider": {
+                    "min": 100,
+                    "max": 1000,
+                    "step": 10
+                },
+                "default": 500
+            },
+            "cache_ttl_min": {
+                "description": "消息缓存的过期时长(分钟)",
+                "type": "int",
+                "hint": "查询群消息时，会将查询到的消息缓存一段时间方便下次快速取用。此处定义缓存过久过期, 单位为分钟，过期后清除缓存的消息",
+                "slider": {
+                    "min": 1,
+                    "max": 60,
+                    "step": 1
+                },
+                "default": 30
+            },
+            "protected_user_ids": {
+                "description": "受保护用户名单",
+                "type": "list",
+                "hint": "填写用户ID（QQ号/微信ID）。名单中的用户不允许被查询消息",
+                "default": []
+            }
+        }
+    },
+    "inject_prompt": {
+        "description": "给提示词注入画像",
+        "type": "bool",
+        "hint": "打开后，每轮对话中，若本地存有当前用户的画像，则自动将该用户画像注入到系统提示词中",
+        "default": false
+    },
+    "entry_storage": {
+        "description": "提示词配置",
+        "hint": "可自定义多套提示词，并定义对应触发命令。由此实现不同风格的画像分析",
+        "type": "template_list",
+        "templates": {
+            "default": {
+                "name": "提示词条目",
+                "items": {
+                    "command": {
+                        "description": "触发命令",
+                        "hint": "定义用什么命令触发本套提示词",
+                        "type": "string",
+                        "default": "请输入命令"
+                    },
+                    "need_admin": { 
+                        "description": "仅管理员可用",
+                        "hint": "是否需要bot管理员权限触发命令",
+                        "type": "bool",
+                        "default": false
+                    },
+                    "content": {
+                        "description": "提示词内容",
+                        "hint": "请填写提示词内容",
+                        "type": "text",
+                        "default": "请输入提示词"
+                    }
+                }
+            }
+        }
+    }
+}

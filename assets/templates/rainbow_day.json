@@ -1,0 +1,61 @@
+{
+  "name": "蜜桃苏打磨砂",
+  "based_on": "frosted_cute",
+  "canvas": {
+    "width": 1000,
+    "min_height": 960,
+    "padding": [68, 78, 68, 86],
+    "content_gap": 18
+  },
+  "colors": {
+    "background_top": [255, 248, 252, 255],
+    "background_mid": [245, 240, 255, 255],
+    "background_bottom": [236, 248, 255, 255],
+    "card": [255, 255, 255, 168],
+    "card_border": [255, 255, 255, 210],
+    "card_shadow": [160, 140, 190, 48],
+    "title": [96, 82, 138, 255],
+    "subtitle": [150, 130, 176, 255],
+    "text": [88, 78, 118, 255],
+    "muted": [148, 136, 172, 255],
+    "accent": [255, 168, 188, 255],
+    "accent_soft": [255, 214, 226, 255],
+    "chip": [255, 255, 255, 160],
+    "chip_text": [150, 110, 150, 255],
+    "section": [255, 255, 255, 145],
+    "section_title": [118, 100, 168, 255],
+    "divider": [230, 210, 235, 140],
+    "footer": [158, 148, 180, 255],
+    "avatar_ring": [255, 196, 210, 255],
+    "glass_highlight": [255, 255, 255, 90],
+    "blob_pink": [255, 186, 206, 70],
+    "blob_lavender": [198, 188, 255, 65],
+    "blob_mint": [170, 230, 220, 60],
+    "blob_peach": [255, 210, 180, 55]
+  },
+  "fonts": {
+    "title_size": 44,
+    "subtitle_size": 20,
+    "section_size": 26,
+    "body_size": 23,
+    "meta_size": 18,
+    "footer_size": 15,
+    "quote_size": 25,
+    "metric_value_size": 24,
+    "metric_label_size": 14,
+    "line_spacing": 9,
+    "paragraph_spacing": 11
+  },
+  "frame": {
+    "enabled": false,
+    "style_dir": "pillowmd_style",
+    "tile": 200,
+    "images": {}
+  },
+  "decor": {
+    "sparkles": true,
+    "soft_blobs": true,
+    "section_dots": true,
+    "frost_blur": 18
+  }
+}
